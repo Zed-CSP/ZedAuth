@@ -1,0 +1,50 @@
+# Rust specific
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# IDE specific
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# macOS specific
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Debug files
+*.log
+*.pdb
+
+# Database
+*.sqlite
+*.sqlite3
+
+# Build output
+/dist/
+/build/
+
+# Dependencies
+/node_modules/
+/.cargo/
+
+# Temporary files
+*.tmp
+*.temp
+/tmp/
+/temp/
+
+# Coverage reports
+/coverage/
+*.profraw
+
+# Configuration overrides
+configuration/local.yaml
