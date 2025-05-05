@@ -7,7 +7,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{users::model::{User, UserResponse}, AppState};
+use crate::{auth::hash_password, users::model::{User, UserResponse}, AppState};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CreateUserRequest {
@@ -28,7 +28,7 @@ pub async fn create_user(
     State(state): State<AppState>,
     Json(user): Json<CreateUserRequest>,
 ) -> Result<Json<UserResponse>, (StatusCode, String)> {
-    let password_hash = bcrypt::hash(user.password.as_bytes(), bcrypt::DEFAULT_COST)
+    let password_hash = hash_password(&user.password)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let now = Utc::now();

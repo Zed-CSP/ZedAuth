@@ -17,8 +17,7 @@ sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "uuid"
 
 # Authentication & Security
 jsonwebtoken = "9.2"
-argon2 = "0.5"
-bcrypt = "0.15"
+argon2 = { version = "0.5", features = ["std"] }
 uuid = { version = "1.7", features = ["v4", "serde"] }
 
 # Serialization
