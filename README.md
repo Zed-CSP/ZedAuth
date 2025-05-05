@@ -12,6 +12,39 @@ A high-performance authentication microservice built with Rust and Axum.
 - CORS support
 - Health check endpoint
 
+## Environment Setup
+
+1. Copy the example environment file:
+```bash
+cp .env.example .env
+```
+
+2. Edit the `.env` file with your local configuration:
+```bash
+# Application Environment
+APP_ENVIRONMENT=local
+
+# Database Configuration
+APP_DATABASE__USERNAME=your_db_username
+APP_DATABASE__PASSWORD=your_db_password
+APP_DATABASE__HOST=localhost
+APP_DATABASE__PORT=5432
+APP_DATABASE__DATABASE_NAME=your_db_name
+
+# JWT Configuration
+APP_JWT__SECRET=your-secret-key-here
+
+# Logging
+RUST_LOG=info
+```
+
+3. Source your environment variables:
+```bash
+source .env
+```
+
+Note: Never commit your `.env` file or any file containing sensitive credentials to version control.
+
 ## API Endpoints
 
 ### Authentication

@@ -19,6 +19,8 @@ Cargo.lock
 .env
 .env.local
 .env.*.local
+setup_env.sh
+configuration/local.yaml
 
 # Debug files
 *.log
