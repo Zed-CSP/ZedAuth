@@ -4,10 +4,9 @@ use sqlx::FromRow;
 use uuid::Uuid;
 use validator::Validate;
 
-#[derive(Debug, Serialize, Deserialize, FromRow, Validate)]
+#[derive(Debug, Serialize, Deserialize, FromRow)]
 pub struct User {
     pub id: Uuid,
-    #[validate(email)]
     pub email: String,
     pub password_hash: String,
     pub first_name: Option<String>,
@@ -28,14 +27,14 @@ pub struct CreateUser {
     pub last_name: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Validate)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct UpdateUser {
     pub first_name: Option<String>,
     pub last_name: Option<String>,
     pub is_active: Option<bool>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize)]
 pub struct UserResponse {
     pub id: Uuid,
     pub email: String,

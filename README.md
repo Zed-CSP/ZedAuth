@@ -4,22 +4,42 @@ A high-performance authentication microservice built with Rust and Axum.
 
 ## Features
 
-- User registration and authentication
-- JWT-based authentication
-- Refresh token support
-- Password hashing with Argon2
-- PostgreSQL database support
-- Configuration management
+- JWT-based authentication with access and refresh tokens
+- Secure password hashing using Argon2
+- User management (CRUD operations)
+- PostgreSQL database integration
+- Environment-based configuration
 - CORS support
 - Health check endpoint
 
-## Prerequisites
+## API Endpoints
+
+### Authentication
+
+- `POST /auth/login` - Login with email and password
+- `POST /auth/refresh` - Refresh access token using refresh token
+- `POST /auth/logout` - Invalidate refresh token
+
+### Users
+
+- `POST /users` - Create a new user
+- `GET /users/:id` - Get user by ID
+- `POST /users/:id` - Update user
+- `DELETE /users/:id` - Delete user
+
+### Health Check
+
+- `GET /health_check` - Check if the service is running
+
+## Getting Started
+
+### Prerequisites
 
 - Rust (latest stable version)
 - PostgreSQL
 - Cargo
 
-## Setup
+### Installation
 
 1. Clone the repository:
 ```bash
@@ -32,40 +52,65 @@ cd zedauth
 createdb zedauth_local
 ```
 
-3. Configure the application:
-   - Copy `configuration/base.yaml` to `configuration/local.yaml`
-   - Update the database credentials in `configuration/local.yaml`
+3. Set up environment variables:
+```bash
+export APP_ENVIRONMENT=local
+export APP_DATABASE__USERNAME=postgres
+export APP_DATABASE__PASSWORD=password
+export APP_DATABASE__HOST=localhost
+export APP_DATABASE__PORT=5432
+export APP_DATABASE__DATABASE_NAME=zedauth_local
+export APP_JWT__SECRET=your-secret-key-here
+```
 
 4. Run migrations:
 ```bash
-cargo install sqlx-cli
-sqlx database create
-sqlx migrate run
+cargo sqlx migrate run
 ```
 
-5. Run the application:
+5. Start the server:
 ```bash
 cargo run
 ```
 
-## API Endpoints
+The server will start on `http://localhost:3000`.
 
-### Health Check
-- `GET /health_check`
-  - Returns "OK" if the service is running
+## Configuration
+
+The service uses a layered configuration system:
+
+1. Base configuration (`configuration/base.yaml`)
+2. Environment-specific configuration (`configuration/local.yaml` or `configuration/production.yaml`)
+3. Environment variables (prefixed with `APP_`)
+
+## Security
+
+- Passwords are hashed using Argon2
+- JWT tokens are used for authentication
+- Refresh tokens are stored in the database
+- CORS is configured to allow all origins (configure for production)
+- Environment variables for sensitive data
 
 ## Development
 
 ### Running Tests
+
 ```bash
 cargo test
 ```
 
-### Running Migrations
+### Database Migrations
+
+Create a new migration:
 ```bash
-sqlx migrate run
+cargo sqlx migrate add <migration_name>
+```
+
+Run migrations:
+```bash
+cargo sqlx migrate run
 ```
 
 ## License
 
-MIT
+This project is licensed under the MIT License - see the LICENSE file for details.
