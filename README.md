@@ -17,15 +17,46 @@ A high-performance authentication microservice built with Rust and Axum.
 ### Authentication
 
 - `POST /auth/login` - Login with email and password
+  ```json
+  {
+    "email": "user@example.com",
+    "password": "your_password"
+  }
+  ```
 - `POST /auth/refresh` - Refresh access token using refresh token
+  ```json
+  {
+    "refresh_token": "your_refresh_token"
+  }
+  ```
 - `POST /auth/logout` - Invalidate refresh token
+  ```json
+  {
+    "refresh_token": "your_refresh_token"
+  }
+  ```
 
 ### Users
 
 - `POST /users` - Create a new user
-- `GET /users/:id` - Get user by ID
-- `POST /users/:id` - Update user
-- `DELETE /users/:id` - Delete user
+  ```json
+  {
+    "email": "user@example.com",
+    "password": "your_password",
+    "first_name": "John",
+    "last_name": "Doe"
+  }
+  ```
+- `GET /users/:id` - Get user by ID (requires authentication)
+- `POST /users/:id` - Update user (requires authentication)
+  ```json
+  {
+    "first_name": "Updated",
+    "last_name": "Name",
+    "is_active": true
+  }
+  ```
+- `DELETE /users/:id` - Delete user (requires authentication)
 
 ### Health Check
 
@@ -43,7 +74,7 @@ A high-performance authentication microservice built with Rust and Axum.
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/zedauth.git
+git clone https://github.com/Zed-CSP/zedauth.git
 cd zedauth
 ```
 
@@ -83,7 +114,8 @@ The service uses a layered configuration system:
 2. Environment-specific configuration (`configuration/local.yaml` or `configuration/production.yaml`)
 3. Environment variables (prefixed with `APP_`)
 
-## Security
+## Security Features
+
 
 - Passwords are hashed using Argon2
 - JWT tokens are used for authentication
