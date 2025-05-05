@@ -59,4 +59,71 @@ pub fn create_jwt(user_id: Uuid, settings: &Settings) -> Result<String, jsonwebt
 
 pub fn create_refresh_token() -> String {
     Uuid::new_v4().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Settings;
+
+    #[test]
+    fn test_password_hashing_and_verification() {
+        let password = "test_password123";
+        
+        // Test password hashing
+        let hash = hash_password(password).unwrap();
+        assert!(!hash.is_empty());
+        assert!(hash.starts_with("$argon2id$")); // Verify it's using Argon2id
+        
+        // Test password verification
+        let verification_result = verify_password(password, &hash).unwrap();
+        assert!(verification_result);
+        
+        // Test wrong password
+        let wrong_password = "wrong_password";
+        let wrong_verification = verify_password(wrong_password, &hash).unwrap();
+        assert!(!wrong_verification);
+    }
+
+    #[test]
+    fn test_jwt_creation() {
+        let settings = Settings {
+            database: crate::config::DatabaseSettings {
+                username: "test".to_string(),
+                password: "test".to_string(),
+                host: "localhost".to_string(),
+                port: 5432,
+                database_name: "test".to_string(),
+            },
+            application: crate::config::ApplicationSettings {
+                port: 3000,
+                host: "localhost".to_string(),
+            },
+            jwt: crate::config::JwtSettings {
+                secret: "test_secret".to_string(),
+                expiration: 3600,
+            },
+        };
+
+        let user_id = Uuid::new_v4();
+        let token = create_jwt(user_id, &settings).unwrap();
+        
+        // Basic JWT validation
+        assert!(!token.is_empty());
+        let parts: Vec<&str> = token.split('.').collect();
+        assert_eq!(parts.len(), 3); // JWT should have 3 parts: header.payload.signature
+    }
+
+    #[test]
+    fn test_refresh_token_creation() {
+        let token1 = create_refresh_token();
+        let token2 = create_refresh_token();
+        
+        // Verify tokens are UUIDs
+        assert!(Uuid::parse_str(&token1).is_ok());
+        assert!(Uuid::parse_str(&token2).is_ok());
+        
+        // Verify tokens are unique
+        assert_ne!(token1, token2);
+    }
 } 
