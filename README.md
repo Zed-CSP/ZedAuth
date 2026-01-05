@@ -1,222 +1,331 @@
-# ZedAuth
+## ZedAuth
 
-A high-performance authentication microservice built with Rust and Axum.
+ZedAuth is a Rust authentication microservice built to demonstrate a **production-grade auth flow** in a compact codebase: access JWTs, HttpOnly refresh cookies, refresh-token rotation, reuse detection, and server-side session revocation.
 
-## Features
+### Table of Contents
 
-- JWT-based authentication with access and refresh tokens
-- Secure password hashing using Argon2
-- User management (CRUD operations)
-- PostgreSQL database integration
-- Environment-based configuration
-- CORS support
-- Health check endpoint
+- [Overview](#overview)
+- [Why Rust](#why-rust)
+- [Architecture](#architecture)
+- [Quickstart (local)](#quickstart-local)
+- [API](#api)
+  - [Auth](#auth)
+  - [Users](#users)
+  - [Health](#health)
+- [Security model](#security-model)
+- [Testing and CI](#testing-and-ci)
+- [Configuration](#configuration)
+- [License](#license)
 
-## Environment Setup
+### Overview
 
-1. Copy the example environment file:
+What this project showcases:
+- **Access JWT + session id (`sid`)**: stateless auth at the edge, with server-side revocation.
+- **Refresh token in HttpOnly cookie**: refresh never goes into local storage.
+- **Rotation + reuse revocation**: old rotated refresh tokens revoke the session.
+- **Typed auth context**: protected handlers require `AuthContext` (Axum extractor).
+- **Unit + integration tests**: DB-backed tests run with `DATABASE_URL`; CI boots Postgres.
+
+### Why Rust
+
+I chose Rust for an auth microservice because it optimizes for **correctness and reliability under concurrency**:
+- **Memory safety**: eliminates whole classes of vulnerabilities (use-after-free, null deref) that are especially painful in security-critical services.
+- **Data-race prevention**: safe concurrency patterns are enforced by the type system; shared state is explicit and thread-safe.
+- **Predictable performance**: minimal runtime overhead; real costs are in crypto (Argon2/JWT) and I/O (Postgres), not a GC/runtime.
+- **Explicit error handling**: failures are explicit `Result` paths; auth failures return clear HTTP status codes.
+
+### Architecture
+
+- **Framework**: Axum (Rust)
+- **DB**: Postgres via SQLx
+- **Access tokens**: JWT (HMAC secret) with claims:
+  - `sub`: user id
+  - `sid`: session id
+  - `exp/iat`
+- **Refresh tokens**: opaque random token stored in an **HttpOnly cookie** (`refresh_token`)
+  - Stored server-side as a **hash** (`sessions.refresh_token_hash`)
+  - Rotated on each refresh
+  - Reuse detection via `previous_refresh_token_hash` → **session revoked**
+
+### Quickstart (local)
+
+Prereqs:
+- Rust (stable)
+- Postgres
+
+1) Create env file:
+
 ```bash
 cp env.example .env
 ```
 
-2. Edit the `.env` file with your local configuration:
-```bash
-# Application Environment
-APP_ENVIRONMENT=local
+2) Update `.env` values as needed (the service loads `.env` automatically on startup). Minimum required:
 
-# Database Configuration
-APP_DATABASE__USERNAME=your_db_username
-APP_DATABASE__PASSWORD=your_db_password
+```bash
+APP_ENVIRONMENT=local
+APP_DATABASE__USERNAME=postgres
+APP_DATABASE__PASSWORD=password
 APP_DATABASE__HOST=localhost
 APP_DATABASE__PORT=5432
-APP_DATABASE__DATABASE_NAME=your_db_name
-
-# JWT Configuration
+APP_DATABASE__DATABASE_NAME=zedauth_local
 APP_JWT__SECRET=your-secret-key-here
-
-# Logging
-RUST_LOG=info
+APP_JWT__EXPIRATION=3600
 ```
 
-3. Source your environment variables:
-```bash
-source .env
-```
+3) Create the database:
 
-Note: Never commit your `.env` file or any file containing sensitive credentials to version control.
-
-## API Endpoints
-
-### Authentication
-
-- `POST /auth/login` - Login with email and password
-  ```json
-  {
-    "email": "user@example.com",
-    "password": "your_password"
-  }
-  ```
-- `POST /auth/refresh` - Refresh access token using the HttpOnly refresh cookie
-- `POST /auth/logout` - Revoke the current session and clear the refresh cookie (Authorization header preferred)
-
-Notes:
-- Access tokens are sent via `Authorization: Bearer <access_token>`.
-- Refresh tokens are stored as an HttpOnly cookie named `refresh_token`.
-- Refresh tokens rotate on every successful refresh. If a previously-rotated (old) refresh token is presented again, the server treats it as reuse and **revokes the session** (returns 401; user must log in again).
-
-## Security model (simple, for now)
-
-For this project’s current scope, we keep the surface area minimal and the guarantees explicit:
-
-- **Minimal auth surface**
-  - `POST /auth/login`: issues an access JWT and sets an HttpOnly refresh cookie
-  - `POST /auth/refresh`: rotates the refresh token and issues a new access JWT
-  - `POST /auth/logout`: revokes the session and clears the refresh cookie
-  - `GET /health_check`: liveness check
-- **Per-request auth context**
-  - Protected handlers require an `AuthContext` extracted per request from the `Authorization` header.
-  - The access JWT carries `sub` (user id) and `sid` (session id).
-  - The service checks the referenced session is active (not revoked, not expired) before accepting the request.
-- **How routes are protected (extractor vs middleware)**
-  - Routes are protected by requiring `AuthContext` as a handler argument (Axum extractor), not by a router-level middleware layer.
-  - If `AuthContext` extraction fails, Axum returns **401** and the handler is never executed.
-  - This is a common production pattern; as the codebase grows, teams often also organize routers into `public` vs `authed` route groups to make it harder to accidentally expose an unprotected sensitive endpoint.
-- **Refresh token safety**
-  - Refresh tokens are stored server-side as a hash in the database (never stored in plaintext).
-  - Refresh token rotation is enforced; reuse triggers session revocation.
-- **Timing hardening (best-effort)**
-  - Authentication failure responses apply a small **jittered minimum delay** to reduce obvious timing signals (e.g., user enumeration and refresh-token probing).
-  - This is **not** a guarantee of constant-time responses end-to-end (DB and network latency still vary); it just makes timing harder to reliably exploit.
-
-## Concurrency + state model
-
-- **No global mutable state**
-  - There are no global singletons, `static mut`, or global `Mutex/RwLock`-protected variables.
-  - Auth state is computed per request (e.g., `AuthContext` is extracted from the request and not stored globally).
-- **Shared, concurrency-safe state**
-  - The service uses Axum `State(AppState)` to share a database pool (`sqlx::PgPool`) and immutable configuration across requests.
-  - This is normal for a microservice: the pool is designed to be safely shared; requests do not “own” the pool, they borrow it.
-
-## Rust memory safety (why it matters here)
-
-- **Memory safety by default**
-  - Request parsing, JWT handling, and DB interactions use safe Rust types (`String`, `Uuid`, `Option`, etc.), avoiding whole classes of bugs like use-after-free and null pointer dereferences.
-- **Data-race prevention**
-  - Shared state (`sqlx::PgPool` + immutable settings) is thread-safe, and Rust’s type system prevents accidental concurrent mutation without explicit synchronization.
-- **Security note**
-  - Memory safety complements (but does not replace) correct security logic: tokens still must be validated and sessions still must be checked, which this service does at runtime.
-
-### Users
-
-- `POST /users` - Create a new user (requires authentication)
-  ```json
-  {
-    "email": "user@example.com",
-    "password": "your_password",
-    "first_name": "John",
-    "last_name": "Doe"
-  }
-  ```
-- `GET /users/:id` - Get user by ID (requires authentication)
-- `POST /users/:id` - Update user (requires authentication)
-  ```json
-  {
-    "first_name": "Updated",
-    "last_name": "Name",
-    "is_active": true
-  }
-  ```
-- `DELETE /users/:id` - Delete user (requires authentication)
-
-### Health Check
-
-- `GET /health_check` - Check if the service is running
-
-## Getting Started
-
-### Prerequisites
-
-- Rust (latest stable version)
-- PostgreSQL
-- Cargo
-
-### Installation
-
-1. Clone the repository:
-```bash
-git clone https://github.com/Zed-CSP/zedauth.git
-cd zedauth
-```
-
-2. Create a PostgreSQL database:
 ```bash
 createdb zedauth_local
 ```
 
-3. Set up environment variables:
-```bash
-export APP_ENVIRONMENT=local
-export APP_DATABASE__USERNAME=postgres
-export APP_DATABASE__PASSWORD=password
-export APP_DATABASE__HOST=localhost
-export APP_DATABASE__PORT=5432
-export APP_DATABASE__DATABASE_NAME=zedauth_local
-export APP_JWT__SECRET=your-secret-key-here
-```
+4) Run the service:
 
-4. Run migrations:
-```bash
-cargo sqlx migrate run
-```
-
-5. Start the server:
 ```bash
 cargo run
 ```
 
-The server will start on `http://localhost:3000`.
+The server listens on `http://127.0.0.1:3000` by default and runs migrations on startup.
 
-## Configuration
+### API
 
-The service uses a layered configuration system:
+Common notes:
+- **Access token** goes in: `Authorization: Bearer <access_token>`
+- **Refresh token** is an HttpOnly cookie named: `refresh_token`
 
-1. Base configuration (`configuration/base.yaml`)
-2. Environment-specific configuration (`configuration/local.yaml` or `configuration/production.yaml`, optional)
-3. Environment variables (prefixed with `APP_`)
+#### Auth
 
-Example environment-specific configs are provided as:
-- `configuration/local.example.yaml`
-- `configuration/production.example.yaml`
+##### `POST /auth/login`
 
-## Security Features
+Request:
 
+```json
+{
+  "email": "user@example.com",
+  "password": "password123"
+}
+```
 
-- Passwords are hashed using Argon2
-- JWT tokens are used for authentication
-- Refresh tokens are stored in the database
-- CORS is configured to allow all origins (configure for production)
-- Environment variables for sensitive data
+Response (200):
 
-## Development
+```json
+{
+  "access_token": "<jwt>",
+  "token_type": "Bearer",
+  "expires_in": 3600
+}
+```
 
-### Running Tests
+Also sets:
+- `Set-Cookie: refresh_token=...; HttpOnly; SameSite=Strict; Path=/auth; Max-Age=...`
+
+Curl:
+
+```bash
+curl -i -X POST http://127.0.0.1:3000/auth/login \
+  -H 'Content-Type: application/json' \
+  -c cookies.txt \
+  -d '{"email":"user@example.com","password":"password123"}'
+```
+
+Status codes:
+- `200`: success
+- `401`: invalid credentials
+- `500`: server error
+
+##### `POST /auth/refresh`
+
+Uses the refresh cookie to rotate the refresh token and issue a new access token.
+
+Response (200):
+
+```json
+{
+  "access_token": "<jwt>",
+  "token_type": "Bearer",
+  "expires_in": 3600
+}
+```
+
+Also rotates:
+- `Set-Cookie: refresh_token=...` (new token)
+
+Curl (cookie jar):
+
+```bash
+curl -i -X POST http://127.0.0.1:3000/auth/refresh \
+  -b cookies.txt -c cookies.txt
+```
+
+Status codes:
+- `200`: refreshed
+- `401`: missing/invalid refresh cookie, or reuse detected (session revoked)
+- `500`: server error
+
+##### `POST /auth/logout`
+
+Revokes the session and clears the refresh cookie.
+
+Curl:
+
+```bash
+curl -i -X POST http://127.0.0.1:3000/auth/logout \
+  -b cookies.txt -c cookies.txt
+```
+
+Status codes:
+- `204`: logged out
+- `500`: server error
+
+#### Users
+
+All `/users` endpoints require `Authorization: Bearer <access_token>`.
+
+##### `POST /users`
+
+Request:
+
+```json
+{
+  "email": "user@example.com",
+  "password": "password123",
+  "first_name": "John",
+  "last_name": "Doe"
+}
+```
+
+Curl:
+
+```bash
+curl -i -X POST http://127.0.0.1:3000/users \
+  -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"user@example.com","password":"password123","first_name":"John","last_name":"Doe"}'
+```
+
+Response (200):
+
+```json
+{
+  "id": "<uuid>",
+  "email": "user@example.com",
+  "first_name": "John",
+  "last_name": "Doe",
+  "is_active": true,
+  "is_verified": false,
+  "created_at": "2026-01-05T00:00:00Z",
+  "updated_at": "2026-01-05T00:00:00Z"
+}
+```
+
+##### `GET /users/:id`
+
+Curl:
+
+```bash
+curl -i http://127.0.0.1:3000/users/<uuid> \
+  -H "Authorization: Bearer ${ACCESS_TOKEN}"
+```
+
+Status codes (users endpoints):
+- `200`: success
+- `204`: deleted
+- `401`: missing/invalid access token (AuthContext extraction failed)
+- `404`: not found
+- `409`: conflicts (e.g., duplicate email on create)
+- `500`: server error
+
+##### `POST /users/:id`
+
+Request:
+
+```json
+{
+  "first_name": "Updated",
+  "last_name": "Name",
+  "is_active": true
+}
+```
+
+##### `DELETE /users/:id`
+
+Curl:
+
+```bash
+curl -i -X DELETE http://127.0.0.1:3000/users/<uuid> \
+  -H "Authorization: Bearer ${ACCESS_TOKEN}"
+```
+
+#### Health
+
+##### `GET /health_check`
+
+```bash
+curl -i http://127.0.0.1:3000/health_check
+```
+
+### Security model
+
+- **Route protection**
+  - Protected handlers require `AuthContext` (extractor), not router-level middleware.
+  - If extraction fails, the handler is never executed and the client receives `401`.
+- **Session-backed JWTs**
+  - JWT contains `sid`; `AuthContext` checks the session is active (not revoked/expired).
+- **Refresh token storage**
+  - Only hashes are stored in DB (`sessions.refresh_token_hash`).
+- **Rotation + reuse revocation**
+  - Refresh rotates the token and stores `previous_refresh_token_hash`.
+  - If an old rotated token is presented again, the session is revoked and the client must log in again.
+- **Timing hardening (best-effort)**
+  - Auth failure responses add a small jittered minimum delay to reduce obvious timing signals.
+  - This is not constant-time end-to-end; DB and network latency still vary.
+
+### Testing and CI
+
+Run tests (unit + integration where configured):
 
 ```bash
 cargo test
 ```
 
-### Database Migrations
+Integration tests require Postgres and `DATABASE_URL` (they are skipped if `DATABASE_URL` is not set):
 
-Create a new migration:
 ```bash
-cargo sqlx migrate add <migration_name>
+export DATABASE_URL=postgres://postgres:postgres@localhost:5432/zedauth_test
+cargo test
 ```
 
-Run migrations:
+Style + lint checks (what CI runs):
+
 ```bash
-cargo sqlx migrate run
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
 ```
 
-## License
+Quick Postgres via Docker:
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+```bash
+docker run --rm -p 5432:5432 \
+  -e POSTGRES_USER=postgres \
+  -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=zedauth_test \
+  postgres:16
+```
+
+CI:
+- GitHub Actions runs `fmt`, `clippy -D warnings`, and `cargo test`
+- A Postgres service is started for integration tests
+
+### Configuration
+
+Config layers:
+1. `configuration/base.yaml`
+2. Optional environment-specific file: `configuration/local.yaml` or `configuration/production.yaml`
+3. Environment variables prefixed with `APP_` (take precedence)
+
+Example config templates:
+- `configuration/local.example.yaml`
+- `configuration/production.example.yaml`
+
+### License
+
+MIT
