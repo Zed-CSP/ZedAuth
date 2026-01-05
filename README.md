@@ -64,11 +64,11 @@ cp env.example .env
 ```bash
 APP_ENVIRONMENT=local
 APP_DATABASE__USERNAME=postgres
-APP_DATABASE__PASSWORD=password
+APP_DATABASE__PASSWORD=your_db_password
 APP_DATABASE__HOST=localhost
 APP_DATABASE__PORT=5432
 APP_DATABASE__DATABASE_NAME=zedauth_local
-APP_JWT__SECRET=your-secret-key-here
+APP_JWT__SECRET=your-secret-key-here-change-me
 APP_JWT__EXPIRATION=3600
 ```
 
@@ -321,6 +321,10 @@ Config layers:
 1. `configuration/base.yaml`
 2. Optional environment-specific file: `configuration/local.yaml` or `configuration/production.yaml`
 3. Environment variables prefixed with `APP_` (take precedence)
+
+Secrets:
+- In production, provide secrets (DB password, JWT secret) via environment variables or a secrets manager.
+- The committed YAML files intentionally omit credentials.
 
 Example config templates:
 - `configuration/local.example.yaml`
