@@ -2,6 +2,8 @@
 
 ZedAuth is a Rust authentication microservice built to demonstrate a **production-grade auth flow** in a compact codebase: access JWTs, HttpOnly refresh cookies, refresh-token rotation, reuse detection, and server-side session revocation.
 
+Last updated: **2026-01-05** — Work in progress (WIP).
+
 ### Table of Contents
 
 - [Overview](#overview)
