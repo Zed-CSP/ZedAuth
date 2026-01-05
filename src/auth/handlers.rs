@@ -1,7 +1,10 @@
 use axum::{extract::State, http::StatusCode, Json};
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use chrono::{Duration, Utc};
+use rand::Rng;
 use serde::{Deserialize, Serialize};
+use std::time::{Duration as StdDuration, Instant};
+use tokio::time::sleep;
 use uuid::Uuid;
 
 use crate::{
@@ -30,6 +33,18 @@ fn build_refresh_cookie(refresh_token: String, is_prod: bool) -> Cookie<'static>
         .build()
 }
 
+async fn jittered_min_delay(start: Instant) {
+    // Best-effort timing hardening (not constant time end-to-end).
+    // Adds a jittered minimum duration on auth failures to reduce obvious timing signals.
+    let min = StdDuration::from_millis(180);
+    let jitter_ms: u64 = rand::thread_rng().gen_range(0..=120);
+    let target = min + StdDuration::from_millis(jitter_ms);
+    let elapsed = start.elapsed();
+    if elapsed < target {
+        sleep(target - elapsed).await;
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LoginRequest {
     pub email: String,
@@ -45,6 +60,8 @@ pub async fn login(
     State(state): State<AppState>,
     Json(login): Json<LoginRequest>,
 ) -> Result<(CookieJar, Json<crate::auth::TokenResponse>), (StatusCode, String)> {
+    let start = Instant::now();
+
     let user = sqlx::query_as::<_, User>(
         r#"
         SELECT id, email, password_hash, first_name, last_name, is_active, is_verified, created_at, updated_at
@@ -56,18 +73,22 @@ pub async fn login(
     .fetch_optional(&state.pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-    .ok_or_else(|| (StatusCode::UNAUTHORIZED, "Invalid credentials".to_string()))?;
+    ;
+
+    let Some(user) = user else {
+        jittered_min_delay(start).await;
+        return Err((StatusCode::UNAUTHORIZED, "Invalid credentials".to_string()));
+    };
 
     if !user.is_active {
-        return Err((
-            StatusCode::UNAUTHORIZED,
-            "Account is not active".to_string(),
-        ));
+        jittered_min_delay(start).await;
+        return Err((StatusCode::UNAUTHORIZED, "Invalid credentials".to_string()));
     }
 
     if !verify_password(&login.password, &user.password_hash)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
     {
+        jittered_min_delay(start).await;
         return Err((StatusCode::UNAUTHORIZED, "Invalid credentials".to_string()));
     }
 
@@ -112,6 +133,8 @@ pub async fn refresh_token(
     // Cookie takes precedence.
     refresh: Option<Json<RefreshTokenRequest>>,
 ) -> Result<(CookieJar, Json<crate::auth::TokenResponse>), (StatusCode, String)> {
+    let start = Instant::now();
+
     let refresh_token = jar
         .get("refresh_token")
         .map(|c| c.value().to_string())
@@ -156,6 +179,7 @@ pub async fn refresh_token(
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+        jittered_min_delay(start).await;
         return Err((
             StatusCode::UNAUTHORIZED,
             "Refresh token reuse detected; session revoked".to_string(),
@@ -164,6 +188,7 @@ pub async fn refresh_token(
 
     // Defensive: ensure we only rotate on the current token.
     if current_hash != refresh_token_hash {
+        jittered_min_delay(start).await;
         return Err((
             StatusCode::UNAUTHORIZED,
             "Invalid refresh token".to_string(),

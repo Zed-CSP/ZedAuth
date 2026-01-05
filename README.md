@@ -64,6 +64,48 @@ Notes:
 - Refresh tokens are stored as an HttpOnly cookie named `refresh_token`.
 - Refresh tokens rotate on every successful refresh. If a previously-rotated (old) refresh token is presented again, the server treats it as reuse and **revokes the session** (returns 401; user must log in again).
 
+## Security model (simple, for now)
+
+For this project’s current scope, we keep the surface area minimal and the guarantees explicit:
+
+- **Minimal auth surface**
+  - `POST /auth/login`: issues an access JWT and sets an HttpOnly refresh cookie
+  - `POST /auth/refresh`: rotates the refresh token and issues a new access JWT
+  - `POST /auth/logout`: revokes the session and clears the refresh cookie
+  - `GET /health_check`: liveness check
+- **Per-request auth context**
+  - Protected handlers require an `AuthContext` extracted per request from the `Authorization` header.
+  - The access JWT carries `sub` (user id) and `sid` (session id).
+  - The service checks the referenced session is active (not revoked, not expired) before accepting the request.
+- **How routes are protected (extractor vs middleware)**
+  - Routes are protected by requiring `AuthContext` as a handler argument (Axum extractor), not by a router-level middleware layer.
+  - If `AuthContext` extraction fails, Axum returns **401** and the handler is never executed.
+  - This is a common production pattern; as the codebase grows, teams often also organize routers into `public` vs `authed` route groups to make it harder to accidentally expose an unprotected sensitive endpoint.
+- **Refresh token safety**
+  - Refresh tokens are stored server-side as a hash in the database (never stored in plaintext).
+  - Refresh token rotation is enforced; reuse triggers session revocation.
+- **Timing hardening (best-effort)**
+  - Authentication failure responses apply a small **jittered minimum delay** to reduce obvious timing signals (e.g., user enumeration and refresh-token probing).
+  - This is **not** a guarantee of constant-time responses end-to-end (DB and network latency still vary); it just makes timing harder to reliably exploit.
+
+## Concurrency + state model
+
+- **No global mutable state**
+  - There are no global singletons, `static mut`, or global `Mutex/RwLock`-protected variables.
+  - Auth state is computed per request (e.g., `AuthContext` is extracted from the request and not stored globally).
+- **Shared, concurrency-safe state**
+  - The service uses Axum `State(AppState)` to share a database pool (`sqlx::PgPool`) and immutable configuration across requests.
+  - This is normal for a microservice: the pool is designed to be safely shared; requests do not “own” the pool, they borrow it.
+
+## Rust memory safety (why it matters here)
+
+- **Memory safety by default**
+  - Request parsing, JWT handling, and DB interactions use safe Rust types (`String`, `Uuid`, `Option`, etc.), avoiding whole classes of bugs like use-after-free and null pointer dereferences.
+- **Data-race prevention**
+  - Shared state (`sqlx::PgPool` + immutable settings) is thread-safe, and Rust’s type system prevents accidental concurrent mutation without explicit synchronization.
+- **Security note**
+  - Memory safety complements (but does not replace) correct security logic: tokens still must be validated and sessions still must be checked, which this service does at runtime.
+
 ### Users
 
 - `POST /users` - Create a new user (requires authentication)
