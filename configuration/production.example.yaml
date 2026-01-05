@@ -1,0 +1,17 @@
+application:
+  host: "0.0.0.0"
+  port: 3000
+
+database:
+  host: "localhost"
+  port: 5432
+  database_name: "zedauth"
+  username: "postgres"
+  password: "password"
+
+jwt:
+  # Must be overridden in production.
+  secret: "change-me"
+  expiration: 3600
+
+

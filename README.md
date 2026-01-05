@@ -16,7 +16,7 @@ A high-performance authentication microservice built with Rust and Axum.
 
 1. Copy the example environment file:
 ```bash
-cp .env.example .env
+cp env.example .env
 ```
 
 2. Edit the `.env` file with your local configuration:
@@ -144,8 +144,12 @@ The server will start on `http://localhost:3000`.
 The service uses a layered configuration system:
 
 1. Base configuration (`configuration/base.yaml`)
-2. Environment-specific configuration (`configuration/local.yaml` or `configuration/production.yaml`)
+2. Environment-specific configuration (`configuration/local.yaml` or `configuration/production.yaml`, optional)
 3. Environment variables (prefixed with `APP_`)
+
+Example environment-specific configs are provided as:
+- `configuration/local.example.yaml`
+- `configuration/production.example.yaml`
 
 ## Security Features
 

@@ -1,7 +1,6 @@
 # Rust specific
 /target/
 **/*.rs.bk
-Cargo.lock
 
 # IDE specific
 .idea/
@@ -20,7 +19,6 @@ Cargo.lock
 .env.local
 .env.*.local
 setup_env.sh
-configuration/local.yaml
 
 # Debug files
 *.log
@@ -50,3 +48,4 @@ configuration/local.yaml
 
 # Configuration overrides
 configuration/local.yaml
+configuration/production.yaml

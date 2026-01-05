@@ -4,10 +4,10 @@ mod db;
 mod users;
 
 use axum::{
-    routing::{get, post, delete},
+    routing::{delete, get, post},
     Router,
 };
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -25,6 +25,10 @@ pub struct AppState {
 
 #[tokio::main]
 async fn main() {
+    // Load local environment variables from `.env` if present.
+    // (Production should prefer real environment variables.)
+    dotenv::dotenv().ok();
+
     // Initialize tracing
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new(
@@ -38,7 +42,7 @@ async fn main() {
 
     // Set up database connection pool
     let pool = db::get_connection_pool(&configuration).await;
-    
+
     // Run migrations
     db::run_migrations(&pool)
         .await
@@ -73,9 +77,16 @@ async fn main() {
         .with_state(state);
 
     // Run our app with hyper
-    let addr = SocketAddr::from(([127, 0, 0, 1], configuration.application.port));
+    let host: IpAddr = configuration
+        .application
+        .host
+        .parse()
+        .unwrap_or_else(|_| "127.0.0.1".parse().unwrap());
+    let addr = SocketAddr::from((host, configuration.application.port));
     tracing::info!("listening on {}", addr);
-    axum::serve(tokio::net::TcpListener::bind(&addr).await.unwrap(), app).await.unwrap();
+    axum::serve(tokio::net::TcpListener::bind(&addr).await.unwrap(), app)
+        .await
+        .unwrap();
 }
 
 async fn health_check() -> &'static str {

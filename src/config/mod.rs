@@ -53,7 +53,10 @@ pub fn get_configuration() -> Result<Settings, config::ConfigError> {
 
     let settings = config::Config::builder()
         .add_source(config::File::from(configuration_directory.join("base")).required(true))
-        .add_source(config::File::from(configuration_directory.join(environment.as_str())).required(true))
+        .add_source(
+            // Environment-specific config is optional; environment variables can override base.
+            config::File::from(configuration_directory.join(environment.as_str())).required(false),
+        )
         .add_source(config::Environment::with_prefix("APP").separator("__"))
         .build()?;
 
@@ -87,4 +90,4 @@ impl TryFrom<String> for Environment {
             )),
         }
     }
-} 
+}

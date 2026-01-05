@@ -40,10 +40,13 @@ pub fn verify_password(password: &str, hash: &str) -> Result<bool, argon2::passw
         .is_ok())
 }
 
-pub fn create_jwt(user_id: Uuid, settings: &Settings) -> Result<String, jsonwebtoken::errors::Error> {
+pub fn create_jwt(
+    user_id: Uuid,
+    settings: &Settings,
+) -> Result<String, jsonwebtoken::errors::Error> {
     let now = Utc::now();
     let exp = now + Duration::seconds(settings.jwt.expiration);
-    
+
     let claims = Claims {
         sub: user_id,
         exp: exp.timestamp(),
@@ -69,16 +72,16 @@ mod tests {
     #[test]
     fn test_password_hashing_and_verification() {
         let password = "test_password123";
-        
+
         // Test password hashing
         let hash = hash_password(password).unwrap();
         assert!(!hash.is_empty());
         assert!(hash.starts_with("$argon2id$")); // Verify it's using Argon2id
-        
+
         // Test password verification
         let verification_result = verify_password(password, &hash).unwrap();
         assert!(verification_result);
-        
+
         // Test wrong password
         let wrong_password = "wrong_password";
         let wrong_verification = verify_password(wrong_password, &hash).unwrap();
@@ -107,7 +110,7 @@ mod tests {
 
         let user_id = Uuid::new_v4();
         let token = create_jwt(user_id, &settings).unwrap();
-        
+
         // Basic JWT validation
         assert!(!token.is_empty());
         let parts: Vec<&str> = token.split('.').collect();
@@ -118,12 +121,12 @@ mod tests {
     fn test_refresh_token_creation() {
         let token1 = create_refresh_token();
         let token2 = create_refresh_token();
-        
+
         // Verify tokens are UUIDs
         assert!(Uuid::parse_str(&token1).is_ok());
         assert!(Uuid::parse_str(&token2).is_ok());
-        
+
         // Verify tokens are unique
         assert_ne!(token1, token2);
     }
-} 
+}

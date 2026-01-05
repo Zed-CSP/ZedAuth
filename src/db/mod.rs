@@ -11,8 +11,6 @@ pub async fn get_connection_pool(configuration: &Settings) -> PgPool {
 }
 
 pub async fn run_migrations(pool: &PgPool) -> Result<(), sqlx::Error> {
-    sqlx::migrate!("./migrations")
-        .run(pool)
-        .await?;
+    sqlx::migrate!("./migrations").run(pool).await?;
     Ok(())
-} 
+}

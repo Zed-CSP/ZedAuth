@@ -59,4 +59,4 @@ impl From<User> for UserResponse {
             updated_at: user.updated_at,
         }
     }
-} 
+}

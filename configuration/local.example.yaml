@@ -1,0 +1,16 @@
+application:
+  host: "127.0.0.1"
+  port: 3000
+
+database:
+  host: "localhost"
+  port: 5432
+  database_name: "zedauth"
+  username: "postgres"
+  password: "password"
+
+jwt:
+  secret: "your-secret-key-here"
+  expiration: 3600
+
+
