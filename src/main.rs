@@ -159,7 +159,8 @@ mod tests {
 
         // Create a session for AuthContext validation
         let session_id = Uuid::new_v4();
-        let refresh_hash = crate::auth::hash_refresh_token("refresh");
+        let refresh_token = format!("refresh-{}", Uuid::new_v4());
+        let refresh_hash = crate::auth::hash_refresh_token(&refresh_token);
         let expires_at = Utc::now() + Duration::days(7);
 
         sqlx::query(

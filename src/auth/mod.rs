@@ -328,7 +328,7 @@ mod tests {
         .unwrap();
 
         let session_id = Uuid::new_v4();
-        let refresh_hash = hash_refresh_token("refresh");
+        let refresh_hash = hash_refresh_token(&format!("refresh-{}", Uuid::new_v4()));
         let expires_at = Utc::now() + Duration::days(7);
 
         sqlx::query(
