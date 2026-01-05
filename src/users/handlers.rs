@@ -8,11 +8,13 @@ use uuid::Uuid;
 
 use crate::{
     auth::hash_password,
+    auth::AuthContext,
     users::model::{CreateUser, UpdateUser, User, UserResponse},
     AppState,
 };
 
 pub async fn create_user(
+    _auth: AuthContext,
     State(state): State<AppState>,
     Json(user): Json<CreateUser>,
 ) -> Result<Json<UserResponse>, (StatusCode, String)> {
@@ -46,6 +48,7 @@ pub async fn create_user(
 }
 
 pub async fn get_user(
+    _auth: AuthContext,
     State(state): State<AppState>,
     Path(user_id): Path<Uuid>,
 ) -> Result<Json<UserResponse>, (StatusCode, String)> {
@@ -64,6 +67,7 @@ pub async fn get_user(
 }
 
 pub async fn update_user(
+    _auth: AuthContext,
     State(state): State<AppState>,
     Path(user_id): Path<Uuid>,
     Json(update): Json<UpdateUser>,
@@ -94,6 +98,7 @@ pub async fn update_user(
 }
 
 pub async fn delete_user(
+    _auth: AuthContext,
     State(state): State<AppState>,
     Path(user_id): Path<Uuid>,
 ) -> Result<StatusCode, (StatusCode, String)> {

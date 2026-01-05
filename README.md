@@ -56,22 +56,17 @@ Note: Never commit your `.env` file or any file containing sensitive credentials
     "password": "your_password"
   }
   ```
-- `POST /auth/refresh` - Refresh access token using refresh token
-  ```json
-  {
-    "refresh_token": "your_refresh_token"
-  }
-  ```
-- `POST /auth/logout` - Invalidate refresh token
-  ```json
-  {
-    "refresh_token": "your_refresh_token"
-  }
-  ```
+- `POST /auth/refresh` - Refresh access token using the HttpOnly refresh cookie
+- `POST /auth/logout` - Revoke the current session and clear the refresh cookie (Authorization header preferred)
+
+Notes:
+- Access tokens are sent via `Authorization: Bearer <access_token>`.
+- Refresh tokens are stored as an HttpOnly cookie named `refresh_token`.
+- Refresh tokens rotate on every successful refresh. If a previously-rotated (old) refresh token is presented again, the server treats it as reuse and **revokes the session** (returns 401; user must log in again).
 
 ### Users
 
-- `POST /users` - Create a new user
+- `POST /users` - Create a new user (requires authentication)
   ```json
   {
     "email": "user@example.com",
