@@ -279,6 +279,16 @@ curl -i http://127.0.0.1:3000/health_check
   - Auth failure responses add a small jittered minimum delay to reduce obvious timing signals.
   - This is not constant-time end-to-end; DB and network latency still vary.
 
+### Upcoming improvements
+
+- **CORS configuration**
+  - CORS is currently permissive by default for developer convenience.
+  - Production deployments should restrict CORS to trusted origins.
+- **Rate limiting**
+  - There is no rate limiting yet; adding a simple per-IP and/or per-account rate limit on `POST /auth/login` would reduce brute-force risk.
+- **Account security lifecycle**
+  - As the project grows, features like account lockout after repeated failures, email verification, and password reset flows would bring it closer to real-world auth system requirements.
+
 ### Testing and CI
 
 Run tests (unit + integration where configured):
