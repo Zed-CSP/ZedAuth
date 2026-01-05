@@ -404,4 +404,97 @@ mod tests {
         .unwrap();
         assert_eq!(err2.0, StatusCode::UNAUTHORIZED);
     }
+
+    #[tokio::test]
+    async fn refresh_reuse_revokes_session() {
+        let db_url = match std::env::var("DATABASE_URL") {
+            Ok(v) => v,
+            Err(_) => return, // skip unless a DB is configured
+        };
+
+        let pool = PgPoolOptions::new()
+            .max_connections(5)
+            .connect(&db_url)
+            .await
+            .unwrap();
+
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+
+        // Create a user
+        let user_id = Uuid::new_v4();
+        let email = format!("reuse-{}@example.com", Uuid::new_v4());
+        let password = "password123";
+        let password_hash = crate::auth::hash_password(password).unwrap();
+
+        sqlx::query(
+            r#"
+            INSERT INTO users (id, email, password_hash, is_active, is_verified)
+            VALUES ($1, $2, $3, true, false)
+            "#,
+        )
+        .bind(user_id)
+        .bind(&email)
+        .bind(&password_hash)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let state = crate::AppState {
+            pool: pool.clone(),
+            settings: test_settings(),
+        };
+
+        // Login -> get initial refresh cookie
+        let (jar_initial, _resp) = super::login(
+            State(state.clone()),
+            Json(LoginRequest {
+                email: email.clone(),
+                password: password.to_string(),
+            }),
+        )
+        .await
+        .unwrap();
+
+        // Rotate once using the initial cookie -> get new cookie
+        let (jar_rotated, _resp2) =
+            super::refresh_token(State(state.clone()), jar_initial.clone(), None)
+                .await
+                .unwrap();
+
+        // Find the session id (created by login)
+        let session_id: Uuid = sqlx::query_scalar(
+            r#"
+            SELECT id FROM sessions
+            WHERE user_id = $1 AND revoked_at IS NULL
+            ORDER BY created_at DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(user_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        // Now reuse the *previous* refresh token (the initial cookie) -> should revoke the session
+        let err = super::refresh_token(State(state.clone()), jar_initial, None)
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(err.0, StatusCode::UNAUTHORIZED);
+
+        let revoked_at: Option<chrono::DateTime<chrono::Utc>> =
+            sqlx::query_scalar("SELECT revoked_at FROM sessions WHERE id = $1")
+                .bind(session_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(revoked_at.is_some());
+
+        // And the rotated refresh token should no longer work because the session is revoked.
+        let err2 = super::refresh_token(State(state), jar_rotated, None)
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(err2.0, StatusCode::UNAUTHORIZED);
+    }
 }
