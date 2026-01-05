@@ -275,6 +275,7 @@ mod tests {
     use axum::extract::State;
     use axum::Json;
     use sqlx::postgres::PgPoolOptions;
+    use uuid::Uuid;
 
     fn test_settings() -> crate::config::Settings {
         crate::config::Settings {
@@ -521,5 +522,326 @@ mod tests {
             .err()
             .unwrap();
         assert_eq!(err2.0, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn login_sets_refresh_cookie_and_creates_session_row() {
+        let db_url = match std::env::var("DATABASE_URL") {
+            Ok(v) => v,
+            Err(_) => return, // skip unless a DB is configured
+        };
+
+        let pool = PgPoolOptions::new()
+            .max_connections(5)
+            .connect(&db_url)
+            .await
+            .unwrap();
+
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+
+        // Create a user
+        let user_id = Uuid::new_v4();
+        let email = format!("login-{}@example.com", Uuid::new_v4());
+        let password = "password123";
+        let password_hash = crate::auth::hash_password(password).unwrap();
+
+        sqlx::query(
+            r#"
+            INSERT INTO users (id, email, password_hash, is_active, is_verified)
+            VALUES ($1, $2, $3, true, false)
+            "#,
+        )
+        .bind(user_id)
+        .bind(&email)
+        .bind(&password_hash)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let state = crate::AppState {
+            pool: pool.clone(),
+            settings: test_settings(),
+        };
+
+        let (jar, _resp) = super::login(
+            State(state),
+            Json(LoginRequest {
+                email: email.clone(),
+                password: password.to_string(),
+            }),
+        )
+        .await
+        .unwrap();
+
+        let cookie = jar
+            .get("refresh_token")
+            .expect("refresh cookie should be set");
+        let refresh_token = cookie.value().to_string();
+        assert!(!refresh_token.is_empty());
+
+        let refresh_hash = crate::auth::hash_refresh_token(&refresh_token);
+        let session_id: Uuid = sqlx::query_scalar(
+            "SELECT id FROM sessions WHERE user_id = $1 AND refresh_token_hash = $2",
+        )
+        .bind(user_id)
+        .bind(refresh_hash)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_ne!(session_id, Uuid::nil());
+    }
+
+    #[tokio::test]
+    async fn logout_revokes_session_and_clears_cookie() {
+        let db_url = match std::env::var("DATABASE_URL") {
+            Ok(v) => v,
+            Err(_) => return, // skip unless a DB is configured
+        };
+
+        let pool = PgPoolOptions::new()
+            .max_connections(5)
+            .connect(&db_url)
+            .await
+            .unwrap();
+
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+
+        // Create a user and a session
+        let user_id = Uuid::new_v4();
+        let email = format!("logout-{}@example.com", Uuid::new_v4());
+        let password_hash = crate::auth::hash_password("password123").unwrap();
+
+        sqlx::query(
+            r#"
+            INSERT INTO users (id, email, password_hash, is_active, is_verified)
+            VALUES ($1, $2, $3, true, false)
+            "#,
+        )
+        .bind(user_id)
+        .bind(&email)
+        .bind(&password_hash)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let session_id = Uuid::new_v4();
+        let refresh_token = "rt";
+        let refresh_hash = crate::auth::hash_refresh_token(refresh_token);
+        let expires_at = Utc::now() + Duration::days(7);
+
+        sqlx::query(
+            r#"
+            INSERT INTO sessions (id, user_id, refresh_token_hash, expires_at)
+            VALUES ($1, $2, $3, $4)
+            "#,
+        )
+        .bind(session_id)
+        .bind(user_id)
+        .bind(&refresh_hash)
+        .bind(expires_at)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let state = crate::AppState {
+            pool: pool.clone(),
+            settings: test_settings(),
+        };
+
+        let jar = CookieJar::new().add(
+            Cookie::build(("refresh_token", refresh_token))
+                .path("/auth")
+                .build(),
+        );
+
+        let auth = AuthContext {
+            user_id,
+            session_id,
+        };
+
+        let (jar, status) = super::logout(State(state), jar, Some(auth)).await.unwrap();
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert!(jar.get("refresh_token").is_none());
+
+        let revoked_at: Option<chrono::DateTime<chrono::Utc>> =
+            sqlx::query_scalar("SELECT revoked_at FROM sessions WHERE id = $1")
+                .bind(session_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(revoked_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn login_failures_do_not_create_sessions() {
+        let db_url = match std::env::var("DATABASE_URL") {
+            Ok(v) => v,
+            Err(_) => return, // skip unless a DB is configured
+        };
+
+        let pool = PgPoolOptions::new()
+            .max_connections(5)
+            .connect(&db_url)
+            .await
+            .unwrap();
+
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+
+        // Wrong password case
+        let user_id = Uuid::new_v4();
+        let email = format!("badpw-{}@example.com", Uuid::new_v4());
+        let password_hash = crate::auth::hash_password("correct_password123").unwrap();
+
+        sqlx::query(
+            r#"
+            INSERT INTO users (id, email, password_hash, is_active, is_verified)
+            VALUES ($1, $2, $3, true, false)
+            "#,
+        )
+        .bind(user_id)
+        .bind(&email)
+        .bind(&password_hash)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let state = crate::AppState {
+            pool: pool.clone(),
+            settings: test_settings(),
+        };
+
+        let err = super::login(
+            State(state.clone()),
+            Json(LoginRequest {
+                email: email.clone(),
+                password: "wrong_password".to_string(),
+            }),
+        )
+        .await
+        .err()
+        .unwrap();
+        assert_eq!(err.0, StatusCode::UNAUTHORIZED);
+
+        let session_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM sessions WHERE user_id = $1")
+                .bind(user_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(session_count, 0);
+
+        // Inactive user case
+        let inactive_user_id = Uuid::new_v4();
+        let inactive_email = format!("inactive-{}@example.com", Uuid::new_v4());
+        let inactive_password = "inactive_password123";
+        let inactive_password_hash = crate::auth::hash_password(inactive_password).unwrap();
+
+        sqlx::query(
+            r#"
+            INSERT INTO users (id, email, password_hash, is_active, is_verified)
+            VALUES ($1, $2, $3, false, false)
+            "#,
+        )
+        .bind(inactive_user_id)
+        .bind(&inactive_email)
+        .bind(&inactive_password_hash)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let err = super::login(
+            State(state),
+            Json(LoginRequest {
+                email: inactive_email.clone(),
+                password: inactive_password.to_string(),
+            }),
+        )
+        .await
+        .err()
+        .unwrap();
+        assert_eq!(err.0, StatusCode::UNAUTHORIZED);
+
+        let session_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM sessions WHERE user_id = $1")
+                .bind(inactive_user_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(session_count, 0);
+    }
+
+    #[tokio::test]
+    async fn logout_without_auth_uses_refresh_cookie_to_revoke_session() {
+        let db_url = match std::env::var("DATABASE_URL") {
+            Ok(v) => v,
+            Err(_) => return, // skip unless a DB is configured
+        };
+
+        let pool = PgPoolOptions::new()
+            .max_connections(5)
+            .connect(&db_url)
+            .await
+            .unwrap();
+
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+
+        // Create a user and a session
+        let user_id = Uuid::new_v4();
+        let email = format!("logout-cookie-{}@example.com", Uuid::new_v4());
+        let password_hash = crate::auth::hash_password("password123").unwrap();
+
+        sqlx::query(
+            r#"
+            INSERT INTO users (id, email, password_hash, is_active, is_verified)
+            VALUES ($1, $2, $3, true, false)
+            "#,
+        )
+        .bind(user_id)
+        .bind(&email)
+        .bind(&password_hash)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let session_id = Uuid::new_v4();
+        let refresh_token = "logout_cookie_rt";
+        let refresh_hash = crate::auth::hash_refresh_token(refresh_token);
+        let expires_at = Utc::now() + Duration::days(7);
+
+        sqlx::query(
+            r#"
+            INSERT INTO sessions (id, user_id, refresh_token_hash, expires_at)
+            VALUES ($1, $2, $3, $4)
+            "#,
+        )
+        .bind(session_id)
+        .bind(user_id)
+        .bind(&refresh_hash)
+        .bind(expires_at)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let state = crate::AppState {
+            pool: pool.clone(),
+            settings: test_settings(),
+        };
+
+        let jar = CookieJar::new().add(
+            Cookie::build(("refresh_token", refresh_token))
+                .path("/auth")
+                .build(),
+        );
+
+        let (_jar, status) = super::logout(State(state), jar, None).await.unwrap();
+        assert_eq!(status, StatusCode::NO_CONTENT);
+
+        let revoked_at: Option<chrono::DateTime<chrono::Utc>> =
+            sqlx::query_scalar("SELECT revoked_at FROM sessions WHERE id = $1")
+                .bind(session_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(revoked_at.is_some());
     }
 }

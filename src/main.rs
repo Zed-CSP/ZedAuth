@@ -60,21 +60,7 @@ async fn main() {
         settings: configuration.clone(),
     };
 
-    // Build our application with routes
-    let app = Router::new()
-        // Health check
-        .route("/health_check", get(health_check))
-        // Auth routes
-        .route("/auth/login", post(login))
-        .route("/auth/refresh", post(refresh_token))
-        .route("/auth/logout", post(logout))
-        // User routes
-        .route("/users", post(create_user))
-        .route("/users/:id", get(get_user))
-        .route("/users/:id", post(update_user))
-        .route("/users/:id", delete(delete_user))
-        .layer(cors)
-        .with_state(state);
+    let app = build_app(state).layer(cors);
 
     // Run our app with hyper
     let host: IpAddr = configuration
@@ -89,6 +75,140 @@ async fn main() {
         .unwrap();
 }
 
+fn build_app(state: AppState) -> Router {
+    Router::new()
+        // Health check
+        .route("/health_check", get(health_check))
+        // Auth routes
+        .route("/auth/login", post(login))
+        .route("/auth/refresh", post(refresh_token))
+        .route("/auth/logout", post(logout))
+        // User routes
+        .route("/users", post(create_user))
+        .route("/users/:id", get(get_user))
+        .route("/users/:id", post(update_user))
+        .route("/users/:id", delete(delete_user))
+        .with_state(state)
+}
+
 async fn health_check() -> &'static str {
     "OK"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::{Request, StatusCode};
+    use chrono::{Duration, Utc};
+    use sqlx::postgres::PgPoolOptions;
+    use tower::ServiceExt;
+    use uuid::Uuid;
+
+    fn test_settings() -> Settings {
+        Settings {
+            database: crate::config::DatabaseSettings {
+                username: "test".to_string(),
+                password: "test".to_string(),
+                host: "localhost".to_string(),
+                port: 5432,
+                database_name: "test".to_string(),
+            },
+            application: crate::config::ApplicationSettings {
+                port: 3000,
+                host: "127.0.0.1".to_string(),
+            },
+            jwt: crate::config::JwtSettings {
+                secret: "test_secret".to_string(),
+                expiration: 3600,
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn users_routes_require_auth_context() {
+        let db_url = match std::env::var("DATABASE_URL") {
+            Ok(v) => v,
+            Err(_) => return, // skip unless a DB is configured
+        };
+
+        let pool = PgPoolOptions::new()
+            .max_connections(5)
+            .connect(&db_url)
+            .await
+            .unwrap();
+
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+
+        // Seed a user
+        let user_id = Uuid::new_v4();
+        let email = format!("users-auth-{}@example.com", Uuid::new_v4());
+        let password_hash = crate::auth::hash_password("password123").unwrap();
+
+        sqlx::query(
+            r#"
+            INSERT INTO users (id, email, password_hash, is_active, is_verified)
+            VALUES ($1, $2, $3, true, false)
+            "#,
+        )
+        .bind(user_id)
+        .bind(&email)
+        .bind(&password_hash)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Create a session for AuthContext validation
+        let session_id = Uuid::new_v4();
+        let refresh_hash = crate::auth::hash_refresh_token("refresh");
+        let expires_at = Utc::now() + Duration::days(7);
+
+        sqlx::query(
+            r#"
+            INSERT INTO sessions (id, user_id, refresh_token_hash, expires_at)
+            VALUES ($1, $2, $3, $4)
+            "#,
+        )
+        .bind(session_id)
+        .bind(user_id)
+        .bind(&refresh_hash)
+        .bind(expires_at)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let state = AppState {
+            pool,
+            settings: test_settings(),
+        };
+        let app = build_app(state);
+
+        // Without Authorization -> 401 (AuthContext extraction fails)
+        let res = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/users/{user_id}"))
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+
+        // With Authorization -> 200
+        let access = crate::auth::create_jwt(user_id, session_id, &test_settings()).unwrap();
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/users/{user_id}"))
+                    .header("Authorization", format!("Bearer {access}"))
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+    }
 }
